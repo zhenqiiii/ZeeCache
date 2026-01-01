@@ -2,6 +2,8 @@ package zeecache
 
 // ByteView保存只读的真实缓存值,使用byte类型以支持任意数据类型的存储
 //
+// 是对缓存值的抽象与封装，规定值统一以ByteView类型存入以及读取
+//
 // 这个其实就是有并发特性的cache中的键值对的值
 //
 // 实现了lru中的value接口,可以存入lru缓存
