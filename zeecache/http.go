@@ -32,6 +32,8 @@ func (p *HTTPPool) Log(format string, v ...interface{}) {
 }
 
 // ServeHTTP是对Handler的重写，用于处理所有请求
+//
+// 处理流程：先拿到Group缓存，再从缓存中读取数据，最后返回
 func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	// 判断请求是否以正确路径前缀开始
 	if !strings.HasPrefix(r.URL.Path, p.basePath) {
@@ -65,6 +67,7 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	}
 
 	// 返回
+	log.Print(view.ByteSlice())
 	w.Header().Set("Content-Type", "application/octet-stream")
 	w.Write(view.ByteSlice())
 
