@@ -60,7 +60,7 @@ func (m *Map) Add(keys ...string) {
 
 // Get方法获取给定key在哈希环上最近的节点（顺时针）
 //
-// 也就是获取存储该数据的节点的名称，向该节点要数据
+// 也就是获取存储该数据的节点的名称
 func (m *Map) Get(key string) string {
 	// 没有节点
 	if len(m.keys) == 0 {
@@ -76,4 +76,5 @@ func (m *Map) Get(key string) string {
 	// Q:为什么要%？A:如果idx == len(m.keys),那么应该选择m.keys[0]
 	// 也就是说该key处于第一个虚拟节点和最后一个虚拟节点之间，
 	// 按顺时针的话应该存放在第一个虚拟节点
+	// 就这么简单的算法也给自己整绕了T-T
 }

@@ -2,20 +2,32 @@ package zeecache
 
 import (
 	"fmt"
+	"io"
 	"log"
 	"net/http"
+	"net/url"
 	"strings"
+	"sync"
+	"zeecache/consistenthash"
 )
 
 // 默认地址前缀
-const defaultBasePath = "/_zeecache/"
+const (
+	defaultBasePath = "/_zeecache/"
+	defaultReplicas = 50
+)
 
-// HTTPPool实现了PeerPicker接口，充当节点池的角色
+// HTTPPool实现了PeerPicker接口，充当节点池的角色，也就是单个服务端/节点
 //
 // 实际地址：self + basePath + ...
 type HTTPPool struct {
-	self     string // 节点自己的地址:IP+端口
-	basePath string // 节点池路径前缀，格式：/_zeecache/
+	self     string              // 节点自己的地址:IP+端口
+	basePath string              // 节点池路径前缀，格式：/_zeecache/
+	mu       sync.Mutex          // 给peers和httpGetters加锁
+	peers    *consistenthash.Map // 节点列表，用于根据具体key选择节点
+	// 每个远程节点对应的httpGetter，因为每个远程节点的baseURL都不同，
+	// 所以要使用对应的httpGetter，应该同时也会方便加锁
+	httpGetters map[string]*httpGetter
 }
 
 // NewHTTPPool创建一个HTTPPool实例，即HTTP节点池
@@ -72,3 +84,54 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 	w.Write(view.ByteSlice())
 
 }
+
+// Set方法更新单一服务端（HTTPPool）的远程节点列表peers
+//
+// 每次都是更新全体节点
+func (p *HTTPPool) Set(peers ...string) {
+	// 加锁
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// 创建一个新的Map，并将peers...加入进去
+	p.peers = consistenthash.New(defaultReplicas, nil)
+	p.peers.Add(peers...)
+	// 同步更新每个节点对应的httpGetter（可以理解为客户端）
+	p.httpGetters = make(map[string]*httpGetter, len(peers))
+	// 这里的peer（节点名称）就是IP+端口，也就是HTTPPool的self
+	// 符合地址形式：IP&port + basePath + groupname + key
+	for _, peer := range peers {
+		p.httpGetters[peer] = &httpGetter{baseURL: peer + p.basePath}
+	}
+}
+
+//=========================客户端===========================//
+
+type httpGetter struct {
+	baseURL string // 将要访问的远程节点的地址
+}
+
+// 重写PeerGetter的Get方法，用于从group中获取数据
+func (h *httpGetter) Get(group string, key string) ([]byte, error) {
+	// 拼接路径
+	u := fmt.Sprintf("%v%v/%v", h.baseURL, url.QueryEscape(group), url.QueryEscape(key))
+	// 发送Get请求到服务端
+	res, err := http.Get(u)
+	if err != nil {
+		return nil, err
+	}
+	defer res.Body.Close()
+
+	// 服务端出现异常
+	if res.StatusCode != http.StatusOK {
+		return nil, fmt.Errorf("server returned: %v", res.Status)
+	}
+	// 从response读取数据
+	bytes, err := io.ReadAll(res.Body)
+	if err != nil {
+		return nil, fmt.Errorf("reading response body: %v", err)
+	}
+
+	return bytes, nil
+}
+
+var _PeerGetter = (*httpGetter)(nil)
