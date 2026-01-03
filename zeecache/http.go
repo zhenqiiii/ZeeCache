@@ -104,7 +104,24 @@ func (p *HTTPPool) Set(peers ...string) {
 	}
 }
 
+// PeerPicker根据key选择节点
+//
+// 实际就是对一致性哈希结构体Map的Get方法的封装
+//
+// 得到节点名称后返回对应节点的PeerGetter
+func (p *HTTPPool) PickPeer(key string) (PeerGetter, bool) {
+	p.mu.Lock()
+	defer p.mu.Unlock()
+	// 获取节点名称，返回对应Getter（不能是本机节点）
+	if peer := p.peers.Get(key); peer != "" && peer != p.self {
+		p.Log("Pick peer %s", peer)
+		return p.httpGetters[peer], true
+	}
+	return nil, false
+}
+
 //=========================客户端===========================//
+// 这里的客户端不是说用户的交互端，而是一个节点访问另一节点时用的客户端
 
 type httpGetter struct {
 	baseURL string // 将要访问的远程节点的地址

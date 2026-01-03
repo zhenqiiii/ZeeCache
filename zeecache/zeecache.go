@@ -28,11 +28,14 @@ func (f GetterFunc) Get(key string) ([]byte, error) {
 
 // Group：最核心数据结构，Group是一个缓存的命名空间
 //
+// 不同节点上的同一缓存集群通过Group名称来区分，只能访问同名Group
+//
 // 每个Group都是一个缓存,也即Group才是cache的完全体
 type Group struct {
-	name      string // Group的唯一名称
-	getter    Getter // 缓存未命中时获取源数据的callback
-	mainCache cache  // 并发缓存
+	name      string     // Group的唯一名称
+	getter    Getter     // 缓存未命中时获取源数据的callback
+	mainCache cache      // 并发缓存
+	peers     PeerPicker // 节点选择,未命中时执行流程2
 }
 
 var (
@@ -85,11 +88,43 @@ func (g *Group) Get(key string) (ByteView, error) {
 	return g.load(key)
 }
 
+// RegisterPeers 注册一个PeerPicker用于选择远程节点
+//
+// 类似于注册一个HTTPPool，将HTTPPool注入到Group中从而使Group能够节点选择
+func (g *Group) RegisterPeers(peers PeerPicker) {
+	if g.peers != nil {
+		panic("RegisterPeerPicker called more than once")
+	}
+	// 注册传入的peer
+	g.peers = peers
+}
+
 // load处理缓存未命中时的情况, 分为两种: 1. 本地读取  2. 从远程节点获取
 func (g *Group) load(key string) (value ByteView, err error) {
-	// 3: 本地读取
+	// 流程2: 远程节点获取
+	if g.peers != nil {
+		// 根据key选择节点，并获取对应Getter客户端
+		if peer, ok := g.peers.PickPeer(key); ok {
+			// 访问节点取值
+			if value, err = g.getFromPeer(peer, key); err == nil {
+				return value, nil
+			}
+			log.Println("[ZeeCache] Failed to get from peer", err)
+		}
+	}
+	// 流程3: 本地读取
 	return g.getLocally(key)
-	// 2: 远程节点获取
+
+}
+
+// getFromPeer方法接收到PeerGetter后访问对应节点，并返回对应缓存值
+func (g *Group) getFromPeer(peer PeerGetter, key string) (ByteView, error) {
+	// 同名Group视为同一集群，只能访问不同节点上的同名Group
+	bytes, err := peer.Get(g.name, key)
+	if err != nil {
+		return ByteView{}, err
+	}
+	return ByteView{b: bytes}, nil
 }
 
 // getLocally从本地读取数据
