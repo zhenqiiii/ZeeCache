@@ -9,6 +9,9 @@ import (
 	"strings"
 	"sync"
 	"zeecache/consistenthash"
+	pb "zeecache/zeecachepb"
+
+	"google.golang.org/protobuf/proto"
 )
 
 // 默认地址前缀
@@ -73,15 +76,16 @@ func (p *HTTPPool) ServeHTTP(w http.ResponseWriter, r *http.Request) {
 
 	// 读取值
 	view, err := group.Get(key)
+	// 封装进protobuf的Response中,将Response作为数据体返回
+	body, err := proto.Marshal(&pb.Response{Value: view.ByteSlice()})
 	if err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}
 
 	// 返回
-	log.Print(view.ByteSlice())
 	w.Header().Set("Content-Type", "application/octet-stream")
-	w.Write(view.ByteSlice())
+	w.Write(body)
 
 }
 
@@ -127,28 +131,32 @@ type httpGetter struct {
 	baseURL string // 将要访问的远程节点的地址
 }
 
-// 重写PeerGetter的Get方法，用于从group中获取数据
-func (h *httpGetter) Get(group string, key string) ([]byte, error) {
+// 重写PeerGetter的Get方法，用于向另一节点发送请求获取数据
+func (h *httpGetter) Get(in *pb.Request, out *pb.Response) error {
 	// 拼接路径
-	u := fmt.Sprintf("%v%v/%v", h.baseURL, url.QueryEscape(group), url.QueryEscape(key))
+	u := fmt.Sprintf("%v%v/%v", h.baseURL, url.QueryEscape(in.GetGroup()), url.QueryEscape(in.GetKey()))
 	// 发送Get请求到服务端
 	res, err := http.Get(u)
 	if err != nil {
-		return nil, err
+		return err
 	}
 	defer res.Body.Close()
 
 	// 服务端出现异常
 	if res.StatusCode != http.StatusOK {
-		return nil, fmt.Errorf("server returned: %v", res.Status)
+		return fmt.Errorf("server returned: %v", res.Status)
 	}
 	// 从response读取数据
 	bytes, err := io.ReadAll(res.Body)
 	if err != nil {
-		return nil, fmt.Errorf("reading response body: %v", err)
+		return fmt.Errorf("reading response body: %v", err)
 	}
-
-	return bytes, nil
+	// 解码protobuf
+	// 注意这个out是传址调用，是一个指针，会影响本身的值，所以不用返回
+	if err = proto.Unmarshal(bytes, out); err != nil {
+		return fmt.Errorf("decoding response body: %v", err)
+	}
+	return nil
 }
 
 var _PeerGetter = (*httpGetter)(nil)

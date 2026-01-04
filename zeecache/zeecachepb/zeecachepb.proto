@@ -1,0 +1,22 @@
+syntax = "proto3";
+
+package geecachepb;
+
+option go_package = "./;zeecachepb";
+
+//使用protobuf进行节点间的通信，提高性能
+// 具体一点就是将本来由http请求携带的参数以及响应body携带的数据用protobuf进行装载，
+// 以提高速度，降低消耗
+
+message Request {
+    string group = 1;  // 访问的group缓存
+    string key = 2; // 要获取的key
+}
+
+message Response {
+    bytes value = 1;    // key对应的值,这里bytes是一个byte数组
+}
+
+service GroupCache {
+  rpc Get(Request) returns (Response);
+}

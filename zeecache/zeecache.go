@@ -5,6 +5,7 @@ import (
 	"log"
 	"sync"
 	"zeecache/singleflight"
+	pb "zeecache/zeecachepb"
 )
 
 // 该部分代码负责与外部交互，控制缓存存储和获取的主流程
@@ -14,7 +15,7 @@ import (
 // 让函数实现某个接口，这样在传入回调函数的参数时，参数既可以是函数也可以是同样实现该接口的结构体
 // 以对象名.Get()的形式调用即可
 
-// Getter 加载某个key对应的值（数据）到缓存中
+// Getter 从本地加载某个key对应的值（数据）到缓存中
 type Getter interface {
 	Get(key string) ([]byte, error)
 }
@@ -104,9 +105,9 @@ func (g *Group) RegisterPeers(peers PeerPicker) {
 
 // load处理缓存未命中时的情况, 分为两种: a. 本地读取  b. 从远程节点获取
 func (g *Group) load(key string) (value ByteView, err error) {
+	// 流程2: 远程节点获取
 	// 使用singleflight.Group.Do方法将发送请求的逻辑包裹起来，由Do来执行，保证同一key的请求只执行一次
 	viewi, err := g.loader.Do(key, func() (interface{}, error) {
-		// 流程2: 远程节点获取
 		if g.peers != nil {
 			// 根据key选择节点，并获取对应Getter客户端
 			if peer, ok := g.peers.PickPeer(key); ok {
@@ -129,12 +130,17 @@ func (g *Group) load(key string) (value ByteView, err error) {
 
 // getFromPeer方法接收到PeerGetter后访问对应节点，并返回对应缓存值
 func (g *Group) getFromPeer(peer PeerGetter, key string) (ByteView, error) {
-	// 同名Group视为同一集群，只能访问不同节点上的同名Group
-	bytes, err := peer.Get(g.name, key)
+	req := &pb.Request{
+		Group: g.name, // 同名Group视为同一集群，只能访问不同节点上的同名Group
+		Key:   key,
+	}
+	res := &pb.Response{}
+	// 调用PeerGetter重写的Get方法
+	err := peer.Get(req, res)
 	if err != nil {
 		return ByteView{}, err
 	}
-	return ByteView{b: bytes}, nil
+	return ByteView{b: res.Value}, nil
 }
 
 // getLocally从本地读取数据
@@ -151,8 +157,6 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 	g.populateCache(key, value)
 	return value, nil
 }
-
-// 差一个远程获取函数：getFromPeer
 
 // populateCache将读取到的数据写入缓存
 func (g *Group) populateCache(key string, value ByteView) {
