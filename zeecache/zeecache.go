@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"zeecache/singleflight"
 )
 
 // 该部分代码负责与外部交互，控制缓存存储和获取的主流程
@@ -32,10 +33,11 @@ func (f GetterFunc) Get(key string) ([]byte, error) {
 //
 // 每个Group都是一个缓存,也即Group才是cache的完全体
 type Group struct {
-	name      string     // Group的唯一名称
-	getter    Getter     // 缓存未命中时获取源数据的callback
-	mainCache cache      // 并发缓存
-	peers     PeerPicker // 节点选择,未命中时执行流程2
+	name      string              // Group的唯一名称
+	getter    Getter              // 缓存未命中时获取源数据的callback
+	mainCache cache               // 并发缓存
+	peers     PeerPicker          // 连接HTTPPool服务端和Group
+	loader    *singleflight.Group // 记录不同key的请求,用于保证每个key都只请求了一次
 }
 
 var (
@@ -57,6 +59,7 @@ func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
 		name:      name,
 		getter:    getter,
 		mainCache: cache{cacheBytes: cacheBytes},
+		loader:    &singleflight.Group{},
 	}
 	groups[name] = g
 	return g
@@ -99,22 +102,29 @@ func (g *Group) RegisterPeers(peers PeerPicker) {
 	g.peers = peers
 }
 
-// load处理缓存未命中时的情况, 分为两种: 1. 本地读取  2. 从远程节点获取
+// load处理缓存未命中时的情况, 分为两种: a. 本地读取  b. 从远程节点获取
 func (g *Group) load(key string) (value ByteView, err error) {
-	// 流程2: 远程节点获取
-	if g.peers != nil {
-		// 根据key选择节点，并获取对应Getter客户端
-		if peer, ok := g.peers.PickPeer(key); ok {
-			// 访问节点取值
-			if value, err = g.getFromPeer(peer, key); err == nil {
-				return value, nil
+	// 使用singleflight.Group.Do方法将发送请求的逻辑包裹起来，由Do来执行，保证同一key的请求只执行一次
+	viewi, err := g.loader.Do(key, func() (interface{}, error) {
+		// 流程2: 远程节点获取
+		if g.peers != nil {
+			// 根据key选择节点，并获取对应Getter客户端
+			if peer, ok := g.peers.PickPeer(key); ok {
+				// 访问节点取值
+				if value, err = g.getFromPeer(peer, key); err == nil {
+					return value, nil
+				}
+				log.Println("[ZeeCache] Failed to get from peer", err)
 			}
-			log.Println("[ZeeCache] Failed to get from peer", err)
 		}
-	}
-	// 流程3: 本地读取
-	return g.getLocally(key)
+		// 流程3: 本地读取
+		return g.getLocally(key)
+	})
 
+	if err == nil {
+		return viewi.(ByteView), nil
+	}
+	return
 }
 
 // getFromPeer方法接收到PeerGetter后访问对应节点，并返回对应缓存值
