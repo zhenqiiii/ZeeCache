@@ -4,6 +4,7 @@ import (
 	"fmt"
 	"log"
 	"sync"
+	"time"
 	"zeecache/singleflight"
 	pb "zeecache/zeecachepb"
 )
@@ -12,7 +13,8 @@ import (
 // 缓存未击中时，从数据源获取数据
 
 // 下面回调Getter的实现是用一个叫接口型函数的东西做的，
-// 让函数实现某个接口，这样在传入回调函数的参数时，参数既可以是函数也可以是同样实现该接口的结构体
+// 让函数实现某个接口，这样在传入回调函数的参数时，
+// 参数既可以是函数也可以是同样实现该接口的结构体
 // 以对象名.Get()的形式调用即可
 
 // Getter 从本地加载某个key对应的值（数据）到缓存中
@@ -34,11 +36,12 @@ func (f GetterFunc) Get(key string) ([]byte, error) {
 //
 // 每个Group都是一个缓存,也即Group才是cache的完全体
 type Group struct {
-	name      string              // Group的唯一名称
-	getter    Getter              // 缓存未命中时获取源数据的callback
-	mainCache cache               // 并发缓存
-	peers     PeerPicker          // 连接HTTPPool服务端和Group
-	loader    *singleflight.Group // 记录不同key的请求,用于保证每个key都只请求了一次
+	name       string              // Group的唯一名称
+	getter     Getter              // 缓存未命中时获取源数据的callback
+	mainCache  cache               // 并发缓存
+	peers      PeerPicker          // 连接HTTPPool服务端和Group
+	loader     *singleflight.Group // 记录不同key的请求,用于保证每个key都只请求了一次
+	defaultTTL time.Duration       // 默认TTL
 }
 
 var (
@@ -47,7 +50,13 @@ var (
 )
 
 // NewGroup创建Group实例
-func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
+//
+// name：该Group的名称，代表一个缓存集群
+//
+// cacheBytes,defaultTTL：用于初始化mainCache的参数
+//
+// getter：缓存未命中时的用于从数据源获取数据的Oncall
+func NewGroup(name string, cacheBytes int64, defaultTTL time.Duration, getter Getter) *Group {
 	// 回调函数为nil
 	if getter == nil {
 		panic("nil Getter")
@@ -57,10 +66,11 @@ func NewGroup(name string, cacheBytes int64, getter Getter) *Group {
 	mu.Lock()
 	defer mu.Unlock()
 	g := &Group{
-		name:      name,
-		getter:    getter,
-		mainCache: cache{cacheBytes: cacheBytes},
-		loader:    &singleflight.Group{},
+		name:       name,
+		getter:     getter,
+		mainCache:  cache{cacheBytes: cacheBytes, defaultTTL: defaultTTL},
+		loader:     &singleflight.Group{},
+		defaultTTL: defaultTTL,
 	}
 	groups[name] = g
 	return g
@@ -118,7 +128,7 @@ func (g *Group) load(key string) (value ByteView, err error) {
 				log.Println("[ZeeCache] Failed to get from peer", err)
 			}
 		}
-		// 流程3: 本地读取
+		// 如果流程2取不到值，则进行流程3: 本地读取
 		return g.getLocally(key)
 	})
 
@@ -160,5 +170,10 @@ func (g *Group) getLocally(key string) (ByteView, error) {
 
 // populateCache将读取到的数据写入缓存
 func (g *Group) populateCache(key string, value ByteView) {
-	g.mainCache.add(key, value)
+	g.mainCache.add(key, value, g.defaultTTL) // 使用默认TTL
+}
+
+// SetWithTTL方法显式设置缓存，并指定TTL
+func (g *Group) SetWithTTL(key string, value ByteView, ttl time.Duration) {
+	g.mainCache.add(key, value, ttl)
 }
