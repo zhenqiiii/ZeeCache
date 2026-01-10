@@ -22,7 +22,7 @@ func (c *cache) add(key string, value ByteView, ttl time.Duration) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
 	if c.lru == nil { // Lazy Initialization: 提高性能，减少程序内存使用
-		c.lru = lru.New(c.cacheBytes, nil)
+		c.lru = lru.New(c.cacheBytes, nil, nil, nil)
 	}
 	// 设置了ttl或者初始化时设定了默认ttl，则启动定时清理机制
 	if ttl > 0 || c.defaultTTL > 0 {

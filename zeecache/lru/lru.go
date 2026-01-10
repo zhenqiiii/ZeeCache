@@ -15,6 +15,10 @@ type Cache struct {
 	cache    map[string]*list.Element // 字典,value存的就是双向链表的节点指针
 	// 可选，元素被清除时调用，当为nil的时候，不执行操作
 	OnEvicted func(key string, value Value)
+
+	// 新增：统计回调
+	OnLRUEvicted func(key string, value Value) // LRU淘汰回调（在Cache层封装Stats的RecordEviction方法）
+	OnExpired    func(key string, value Value) // 过期删除回调，同上
 }
 
 // 这里某个记录的key实际在字典和双向链表中都有存一份
@@ -36,12 +40,14 @@ type Value interface {
 }
 
 // 实例化一个Cache
-func New(maxBytes int64, OnEvicted func(string, Value)) *Cache {
+func New(maxBytes int64, OnEvicted, OnLRUEvicted, OnExpired func(string, Value)) *Cache {
 	return &Cache{
-		maxBytes:  maxBytes,
-		ll:        list.New(),
-		cache:     make(map[string]*list.Element),
-		OnEvicted: OnEvicted,
+		maxBytes:     maxBytes,
+		ll:           list.New(),
+		cache:        make(map[string]*list.Element),
+		OnEvicted:    OnEvicted,
+		OnLRUEvicted: OnLRUEvicted,
+		OnExpired:    OnExpired,
 	}
 }
 
@@ -101,9 +107,13 @@ func (c *Cache) RemoveOldest() {
 		delete(c.cache, kv.key)
 		// 更新cache大小
 		c.nbytes -= int64(len(kv.key)) + int64(kv.value.Len())
-		// 回调函数
+		// 通用回调函数
 		if c.OnEvicted != nil {
 			c.OnEvicted(kv.key, kv.value)
+		}
+		// LRU淘汰统计回调
+		if c.OnLRUEvicted != nil {
+			c.OnLRUEvicted(kv.key, kv.value)
 		}
 	}
 }
@@ -121,6 +131,10 @@ func (c *Cache) RemoveExpired() {
 		kv := ele.Value.(*entry)
 		if kv.expiresAt > 0 && now > kv.expiresAt {
 			c.Remove(kv.key)
+			// 过期统计回调
+			if c.OnExpired != nil {
+				c.OnExpired(kv.key, kv.value)
+			}
 		}
 		ele = next
 	}
@@ -150,4 +164,11 @@ func (c *Cache) AddWithTTL(key string, value Value, ttl int64) {
 // 用于获取添加了多少条数据(链表中节点个数)
 func (c *Cache) Len() int {
 	return c.ll.Len()
+}
+
+// GetStatsInfo 返回
+//
+// keysCount（缓存项数量）和bytesCount（缓存字节数）两个统计信息
+func (c *Cache) GetStatsInfo() (keys int64, bytes int64) {
+	return int64(c.ll.Len()), c.nbytes
 }
