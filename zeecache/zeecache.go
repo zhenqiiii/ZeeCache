@@ -92,7 +92,7 @@ func (g *Group) Get(key string) (ByteView, error) {
 		return ByteView{}, fmt.Errorf("key is required")
 	}
 
-	// 流程1：缓存命中，直接从缓存中读取
+	// 流程1：直接从缓存中读取
 	if v, ok := g.mainCache.get(key); ok {
 		log.Println("[ZeeCache] hit")
 		return v, nil

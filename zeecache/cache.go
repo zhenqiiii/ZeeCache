@@ -83,17 +83,21 @@ func (c *cache) add(key string, value ByteView, ttl time.Duration) {
 	}
 }
 
-// 获取
+// 获取（只从缓存中）
 func (c *cache) get(key string) (value ByteView, ok bool) {
 	c.mu.Lock()
 	defer c.mu.Unlock()
+	// 在此处计算hit和miss数，
+	// 那么后续得到的HitRate为本地缓存命中率
+	// 但QPS正确，请求是全部计算到了的
+	// 因为所有请求都会先从本地缓存走一遍
 	if c.lru == nil {
 		// 出于某种原因没有lru，也算miss
 		c.stats.RecordMiss()
 		return
 	}
 	if v, ok := c.lru.Get(key); ok {
-		// 在此处计算hit数，那么后续得到的HitRate为本地缓存命中率
+
 		c.stats.RecordHit()
 		return v.(ByteView), ok
 	}
