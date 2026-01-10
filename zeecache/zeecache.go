@@ -97,7 +97,6 @@ func (g *Group) Get(key string) (ByteView, error) {
 		log.Println("[ZeeCache] hit")
 		return v, nil
 	}
-
 	// 流程2/3：未命中，从远程节点读取/本地读取（2是远程，后面实现）
 	return g.load(key)
 }

@@ -47,8 +47,8 @@ func (s *Stats) RecordMiss() {
 	s.misses.Add(1)
 }
 
-// RecordEviction 记录LRU淘汰
-func (s *Stats) RecordEviction() {
+// RecordLRUEviction 记录LRU淘汰
+func (s *Stats) RecordLRUEviction() {
 	s.evictions.Add(1)
 }
 
