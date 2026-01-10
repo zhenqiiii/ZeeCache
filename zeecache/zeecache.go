@@ -173,7 +173,7 @@ func (g *Group) populateCache(key string, value ByteView) {
 	g.mainCache.add(key, value, g.defaultTTL) // 使用默认TTL
 }
 
-// SetWithTTL方法显式设置缓存，并指定TTL
+// SetWithTTL方法显式设置缓存，并为缓存指定TTL
 func (g *Group) SetWithTTL(key string, value ByteView, ttl time.Duration) {
 	g.mainCache.add(key, value, ttl)
 }
